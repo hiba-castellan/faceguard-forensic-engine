@@ -1,6 +1,8 @@
 import streamlit as st
 import cv2
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import tempfile
 import os
 import time
@@ -101,64 +103,30 @@ except Exception as e:
 
 # ================= HELPER FUNCTIONS =================
 
-def apply_glitch(image):
-    """Creates a chromatic aberration effect for fake detection."""
-    glitched = np.zeros_like(image)
-    shift = 15
-    # Shift color channels to create a glitch
-    glitched[:, shift:, 0] = image[:, :-shift, 0]  # Red shift
-    glitched[:, :, 1] = image[:, :, 1]             # Green normal
-    glitched[:, :-shift, 2] = image[:, shift:, 2]  # Blue shift
+def apply_glitch(image, score):
+    """Adds a red transparent overlay and a small neon alert in the bottom corner."""
+    red_layer = np.full_like(image, (255, 0, 0)) 
+    overlay = cv2.addWeighted(image, 0.75, red_layer, 0.25, 0)
+    
+    glitched = np.copy(overlay)
+    shift = 8
+    glitched[:, shift:, 0] = overlay[:, :-shift, 0] 
+    glitched[:, :-shift, 2] = overlay[:, shift:, 2] 
+    
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    text = f"!!! MANIPULATION ALERT ({score*100:.0f}%) !!!"
+    text_size = cv2.getTextSize(text, font, 0.6, 2)[0]
+    
+    x_pos = image.shape[1] - text_size[0] - 20
+    y_pos = image.shape[0] - 20
+    
+    cv2.putText(glitched, text, (x_pos+1, y_pos+1), font, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(glitched, text, (x_pos, y_pos), font, 0.6, (255, 0, 100), 2, cv2.LINE_AA)
+    
     return glitched
 
-def draw_digital_barcode(predictions, sensitivity):
-    """Generates a sleek, transparent loading-bar style barcode."""
-    h, w = 60, 800
-    # Use 4 channels (RGBA) and initialize to 0 for full transparency
-    canvas = np.zeros((h, w, 4), dtype=np.uint8)
-    if not predictions: return canvas
-    
-    border_color = (0, 255, 255, 255) # Cyan, fully opaque
-    pad_x, pad_y = 20, 15
-    track_w = w - 2 * pad_x
-    track_h = h - 2 * pad_y
-    
-    # Outer frame outline
-    cv2.rectangle(canvas, (pad_x, pad_y), (w - pad_x, h - pad_y), border_color, 1)
-    
-    # Tiny tech accents
-    cv2.line(canvas, (pad_x, pad_y - 4), (pad_x + 60, pad_y - 4), border_color, 2)
-    cv2.line(canvas, (w - pad_x - 60, h - pad_y + 4), (w - pad_x, h - pad_y + 4), border_color, 2)
-
-    # Tiny segmented boxes
-    box_gap = 4
-    usable_w = track_w - 10
-    
-    num_preds = len(predictions)
-    max_boxes = usable_w // (2 + box_gap)
-    
-    display_preds = predictions[-max_boxes:] if num_preds > max_boxes else predictions
-    num_display = len(display_preds)
-    
-    available_w = max(1, usable_w - (num_display * box_gap))
-    box_w = max(2, available_w // max(num_display, 1))
-    
-    start_x = pad_x + 5
-    start_y = pad_y + 4
-    box_h = track_h - 8
-    
-    for i, pred in enumerate(display_preds):
-        # Colors use RGBA to ensure they show up solid on the transparent background
-        color = (255, 0, 0, 255) if pred > sensitivity else (0, 255, 255, 255) 
-        x_pos = start_x + i * (box_w + box_gap)
-        cv2.rectangle(canvas, (x_pos, start_y), (x_pos + box_w, start_y + box_h), color, -1)
-        
-    return canvas
-
 def draw_cyber_hud(image, face_landmarks, score=None, sensitivity=0.40):
-    """Draws a high-tech targeting box and biometric data around the face."""
     h, w, c = image.shape
-    
     x_min, y_min = w, h
     x_max, y_max = 0, 0
     for lm in face_landmarks.landmark:
@@ -169,63 +137,35 @@ def draw_cyber_hud(image, face_landmarks, score=None, sensitivity=0.40):
         if y > y_max: y_max = y
 
     pad = 20
-    x_min = max(0, x_min - pad)
-    y_min = max(0, y_min - pad)
-    x_max = min(w, x_max + pad)
-    y_max = min(h, y_max + pad)
+    x_min, y_min, x_max, y_max = max(0, x_min - pad), max(0, y_min - pad), min(w, x_max + pad), min(h, y_max + pad)
 
-    # Change HUD color based on threat level
     if score is None:
-        color = (0, 255, 255) # Scanning (Cyan)
-        status_text = "SCANNING..."
+        color, status_text = (0, 255, 255), "SCANNING..."
     elif score > sensitivity:
-        color = (255, 0, 0) # Fake (Red)
-        status_text = f"THREAT LVL: {score*100:.1f}%"
+        color, status_text = (255, 0, 0), f"THREAT LVL: {score*100:.1f}%"
     else:
-        color = (0, 255, 255) # Authentic (Cyan)
-        status_text = f"SECURE: {(1-score)*100:.1f}%"
+        color, status_text = (0, 255, 255), f"SECURE: {(1-score)*100:.1f}%"
 
-    thickness = 2
-    line_len = 30
-
+    thickness, line_len = 2, 30
     cv2.line(image, (x_min, y_min), (x_min + line_len, y_min), color, thickness)
     cv2.line(image, (x_min, y_min), (x_min, y_min + line_len), color, thickness)
-    cv2.line(image, (x_max, y_min), (x_max - line_len, y_min), color, thickness)
-    cv2.line(image, (x_max, y_min), (x_max, y_min + line_len), color, thickness)
-    cv2.line(image, (x_min, y_max), (x_min + line_len, y_max), color, thickness)
-    cv2.line(image, (x_min, y_max), (x_min, y_max - line_len), color, thickness)
     cv2.line(image, (x_max, y_max), (x_max - line_len, y_max), color, thickness)
     cv2.line(image, (x_max, y_max), (x_max, y_max - line_len), color, thickness)
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.5
     
-    # Print Terminator Data
-    depth = round(random.uniform(1.2, 3.5), 2)
-    cv2.putText(image, f"TRK: {x_min},{y_min}", (x_max + 10, y_min + 20), font, font_scale, color, 1, cv2.LINE_AA)
-    cv2.putText(image, f"DPTH: {depth}m", (x_max + 10, y_min + 40), font, font_scale, color, 1, cv2.LINE_AA)
-    cv2.putText(image, status_text, (x_max + 10, y_min + 60), font, font_scale, color, 1, cv2.LINE_AA)
-
+    cv2.putText(image, status_text, (x_max + 10, y_min + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     return image
 
 def draw_visuals(image, score=None, sensitivity=0.40):
-    """Draws triangular mesh and Cyber HUD."""
     if not VISUALS_ENABLED: return image
     try:
         output = image.copy()
         results = face_mesh.process(output)
-        
         if results.multi_face_landmarks:
             for lm in results.multi_face_landmarks:
-                mp_drawing.draw_landmarks(
-                    output, 
-                    lm, 
-                    mp_face_mesh.FACEMESH_TESSELATION, 
-                    landmark_drawing_spec=sci_fi_landmark_style,
-                    connection_drawing_spec=sci_fi_connections_style
-                )
+                mp_drawing.draw_landmarks(output, lm, mp_face_mesh.FACEMESH_TESSELATION, 
+                                          landmark_drawing_spec=sci_fi_landmark_style,
+                                          connection_drawing_spec=sci_fi_connections_style)
                 output = draw_cyber_hud(output, lm, score, sensitivity)
-                
         return output
     except: return image
 
@@ -236,27 +176,13 @@ def preprocess_image(img):
 
 def simulate_terminal_logging():
     terminal = st.empty()
-    steps = [
-        "Initiating Neural Protocols...",
-        "Scanning Biometric Vectors...",
-        "Analyzing Pixel Variances...",
-        "Isolating Anomalies...",
-        "Compiling Forensic Verdict..."
-    ]
-    
+    steps = ["Initiating Neural Protocols...", "Scanning Biometric Vectors...", 
+             "Analyzing Pixel Variances...", "Isolating Anomalies...", "Compiling Forensic Verdict..."]
     for i, step in enumerate(steps):
         progress = (i + 1) * 20
         bar = "█" * (progress // 5) + "░" * (20 - (progress // 5))
-        
-        terminal.markdown(f"""
-        ```shell
-        > {step}
-        > [{bar}] {progress}%
-        ```
-        """)
+        terminal.markdown(f"```shell\n> {step}\n> [{bar}] {progress}%\n```")
         time.sleep(0.3)
-        
-    time.sleep(0.2)
     terminal.empty()
 
 # ================= MAIN APP =================
@@ -267,30 +193,18 @@ def load_faceguard_model():
 try:
     model = load_faceguard_model()
 except:
-    st.error("❌ Model not found! Check path.")
+    st.error("❌ Model not found!")
     st.stop()
 
-# --- SIDEBAR CONTROL PANEL ---
 st.sidebar.title("⚙️ CONTROL PANEL")
 mode = st.sidebar.radio("SELECT MODE", ["📸 Image Analysis", "🎥 Video Forensics", "🛑 Live Webcam Scan"])
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎚️ SETTINGS")
 sensitivity = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.40, 0.05)
-
-st.sidebar.markdown("---")
 if st.sidebar.button("🔄 RESET SYSTEM"):
     st.cache_resource.clear()
     st.rerun()
 
-st.sidebar.markdown("---")
-with st.sidebar.expander("ℹ️ SYSTEM SPECS"):
-    st.markdown("**Core:** MobileNetV2 (Full Frame Analysis)")
-    st.markdown("**Dataset:** FaceForensics++")
-    st.markdown("**Backend:** TensorFlow + OpenCV")
-    st.markdown(f"**Visuals:** {'🟢 Online' if VISUALS_ENABLED else '🔴 Offline'}")
-
-# --- MAIN HEADER ---
 st.markdown("""
 <div style="display: flex; align-items: center; margin-bottom: 5px;">
     <span style="font-size: 3rem; margin-right: 15px; text-shadow: 0 0 10px #00d4ff;">🛡️</span>
@@ -303,6 +217,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================= MODE: LIVE WEBCAM =================
+# ================= MODE: LIVE WEBCAM =================
 if mode == "🛑 Live Webcam Scan":
     st.markdown("### 🔴 REAL-TIME SURVEILLANCE")
     col1, col2 = st.columns([2, 1])
@@ -312,44 +227,56 @@ if mode == "🛑 Live Webcam Scan":
     if run:
         frame_placeholder = col1.empty()
         verdict_placeholder = st.empty()
-        st.markdown("#### DIGITAL FINGERPRINT RADAR")
-        barcode_placeholder = st.empty()
+        st.markdown("#### 📡 LIVE RISK MONITOR")
+        st.caption("The gauge shows real-time risk. The red line marks the 'Danger Threshold'; bars above this indicate active manipulation.")
         chart_placeholder = st.empty()
         
         cap = cv2.VideoCapture(0)
-        score_buffer = deque(maxlen=10)
-        history = []
         
         while run:
             ret, frame = cap.read()
             if not ret: break
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
             pred = model.predict(preprocess_image(rgb), verbose=0)[0][0]
-            score_buffer.append(pred)
-            avg_score = sum(score_buffer) / len(score_buffer)
-            history.append(avg_score)
             
-            # Apply visuals, HUD, and Glitch if fake
-            visual_frame = draw_visuals(rgb, avg_score, sensitivity)
-            if avg_score > sensitivity:
-                visual_frame = apply_glitch(visual_frame)
-                
-            frame_placeholder.image(visual_frame, caption="LIVE BIOMETRIC FEED", use_container_width=True)
+            # Apply visuals and red overlay
+            visual_frame = draw_visuals(rgb, pred, sensitivity)
+            if pred > sensitivity: 
+                visual_frame = apply_glitch(visual_frame, pred)
+            frame_placeholder.image(visual_frame, use_container_width=True)
             
-            conf = avg_score * 100
-            if avg_score > sensitivity:
-                verdict_placeholder.error(f"🚨 THREAT DETECTED: FAKE ({conf:.1f}%)")
+            # Verdict Text
+            if pred > sensitivity:
+                verdict_placeholder.error(f"🚨 THREAT DETECTED: FAKE ({pred*100:.1f}%)")
             else:
-                verdict_placeholder.success(f"✅ STATUS: AUTHENTIC ({100-conf:.1f}%)")
+                verdict_placeholder.success(f"✅ STATUS: AUTHENTIC ({(1-pred)*100:.1f}%)")
             
-            # Update Barcode and Line Chart
-            barcode_img = draw_digital_barcode(history[-50:], sensitivity)
-            barcode_placeholder.image(barcode_img, use_container_width=True)
-            chart_placeholder.line_chart(history[-50:], height=150)
+            # --- UPDATED VERTICAL INDICATOR GAUGE ---
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=pred * 100,
+                domain={'x': [0, 1], 'y': [0, 1]},
+                title={'text': "Risk Level (%)"},
+                gauge={
+                    'axis': {'range': [0, 100], 'tickcolor': "white"},
+                    'bar': {'color': "#ff4b4b" if pred > sensitivity else "#00f2ff"},
+                    'bgcolor': "rgba(0,0,0,0)",
+                    'threshold': {
+                        'line': {'color': "white", 'width': 4},
+                        'thickness': 0.75,
+                        'value': sensitivity * 100
+                    }
+                }
+            ))
+            
+            fig.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#00ffff", family="Roboto Mono"),
+                height=300, margin=dict(l=20, r=20, t=40, b=20)
+            )
+            chart_placeholder.plotly_chart(fig, use_container_width=True)
             
         cap.release()
-
 # ================= MODE: VIDEO FORENSICS =================
 elif mode == "🎥 Video Forensics":
     uploaded_video = st.file_uploader("UPLOAD VIDEO EVIDENCE", type=["mp4"])
@@ -357,80 +284,45 @@ elif mode == "🎥 Video Forensics":
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
         tfile.write(uploaded_video.read())
         tfile.close()
-        
         col_orig, col_proc = st.columns(2)
-        with col_orig:
-            st.markdown("#### 📼 ORIGINAL EVIDENCE")
-            st.video(tfile.name)
-        
-        with col_proc:
-            st.markdown("#### 🕵️‍♂️ FORENSIC SCAN")
-            st_frame = st.empty()
-            bar = st.progress(0)
-
-        if st.button("INITIATE FORENSIC SCAN"):
+        with col_orig: st.video(tfile.name)
+        with col_proc: st_frame, bar = st.empty(), st.progress(0)
+        if c2.button("INITIATE FORENSIC SCAN") if 'c2' in locals() else st.button("INITIATE FORENSIC SCAN"):
             simulate_terminal_logging()
-            
             cap = cv2.VideoCapture(tfile.name)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            
-            score_buffer = deque(maxlen=5)
-            smoothed_predictions = []
-            suspicious_frames = []
-            
-            frame_id = 0
-            while cap.isOpened():
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            preds, suspicious = [], []
+            for i in range(total):
                 ret, frame = cap.read()
                 if not ret: break
-                
-                if frame_id % FRAME_INTERVAL == 0:
+                if i % FRAME_INTERVAL == 0:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    
-                    raw_pred = model.predict(preprocess_image(rgb), verbose=0)[0][0]
-                    score_buffer.append(raw_pred)
-                    smoothed_score = sum(score_buffer) / len(score_buffer)
-                    smoothed_predictions.append(smoothed_score)
-                    
-                    # Keep a clean copy of the original frame for evidence
-                    clean_evidence_frame = rgb.copy()
-                    
-                    # Apply visuals, HUD, and Glitch for the active scanner
-                    vis = draw_visuals(rgb, raw_pred, sensitivity)
-                    if raw_pred > sensitivity:
-                        vis = apply_glitch(vis)
-                        # Save the CLEAN frame to the gallery, not the glitched one
-                        suspicious_frames.append((clean_evidence_frame, raw_pred))
-                    
-                    st_frame.image(vis, caption=f"Processing Frame {frame_id}", use_container_width=True)
-                    bar.progress(min(frame_id/total_frames, 1.0))
-                    
-                frame_id += 1
+                    p = model.predict(preprocess_image(rgb), verbose=0)[0][0]
+                    preds.append(p)
+                    vis = draw_visuals(rgb, p, sensitivity)
+                    if p > sensitivity:
+                        vis = apply_glitch(vis, p)
+                        suspicious.append((rgb, p))
+                    st_frame.image(vis, use_container_width=True)
+                    bar.progress(min(i/total, 1.0))
             cap.release()
+            st.markdown("### 📋 FORENSIC ANALYSIS REPORT")
+            avg = np.mean(preds)
+            if avg > sensitivity: st.error(f"🚨 VERDICT: MANIPULATION DETECTED ({avg*100:.1f}%)")
+            else: st.success("✅ CONTENT AUTHENTIC")
             
-            st.markdown("---")
-            st.markdown("### 📋 FORENSIC REPORT")
-            
-            avg_score = np.mean(smoothed_predictions)
-            c1, c2 = st.columns(2)
-            if avg_score > sensitivity:
-                c1.error("🚨 VERDICT: FAKE DETECTED")
-                c2.metric("CONFIDENCE", f"{avg_score*100:.2f}%")
-            else:
-                c1.success("✅ VERDICT: AUTHENTIC")
-                c2.metric("REALITY SCORE", f"{(100 - avg_score*100):.2f}%")
-            
-            st.markdown("#### DIGITAL FINGERPRINT")
-            barcode_img = draw_digital_barcode(smoothed_predictions, sensitivity)
-            st.image(barcode_img, use_container_width=True)
-            st.line_chart(smoothed_predictions, height=200)
-
-            if suspicious_frames:
-                st.markdown("#### 🚩 SUSPICIOUS ARTIFACTS")
-                cols = st.columns(4) 
-                for i, (f, s) in enumerate(suspicious_frames[:4]):
-                    # Now shows the clean original frame
-                    cols[i].image(f, caption=f"Risk: {s*100:.0f}%", use_container_width=True)
-
+            # Dashboard Graph
+            t_sec = [round(i * (FRAME_INTERVAL / 30), 2) for i in range(len(preds))]
+            scores = [p * 100 for p in preds]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=t_sec, y=scores, marker_color=['#ff4b4b' if s > sensitivity*100 else '#00f2ff' for s in scores]))
+            fig.add_trace(go.Scatter(x=t_sec, y=scores, mode='lines+markers', line=dict(color='white', width=2), marker=dict(size=8, color='#ff00ff')))
+            fig.add_hline(y=sensitivity*100, line_dash="dash", line_color="#ff4b4b")
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#00ffff"), height=400, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+            if suspicious:
+                cols = st.columns(4)
+                for i, (f, s) in enumerate(suspicious[:4]): cols[i].image(f, caption=f"Risk: {s*100:.0f}%", use_container_width=True)
         try: os.remove(tfile.name)
         except: pass
 
@@ -438,37 +330,15 @@ elif mode == "🎥 Video Forensics":
 elif mode == "📸 Image Analysis":
     uploaded = st.file_uploader("UPLOAD IMAGE EVIDENCE", type=["jpg", "png"])
     if uploaded:
-        bytes_data = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
-        img = cv2.imdecode(bytes_data, 1)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        col_l, col_r = st.columns(2)
-        with col_l:
-            st.markdown("#### 🖼️ ORIGINAL")
-            st.image(img_rgb, use_container_width=True)
-        with col_r:
-            st.markdown("#### 🤖 BIOMETRIC SCAN")
-            scan_placeholder = st.empty()
-            # Initial scan without score
-            scan_placeholder.image(draw_visuals(img_rgb), use_container_width=True)
-        
-        if st.button("RUN DIAGNOSTIC"):
+        img_rgb = cv2.cvtColor(cv2.imdecode(np.asarray(bytearray(uploaded.read()), dtype=np.uint8), 1), cv2.COLOR_BGR2RGB)
+        c1, c2 = st.columns(2)
+        c1.image(img_rgb)
+        scan = c2.empty()
+        scan.image(draw_visuals(img_rgb))
+        if c2.button("RUN DIAGNOSTIC"):
             simulate_terminal_logging()
-            
             pred = model.predict(preprocess_image(img_rgb))[0][0]
-            conf = pred * 100
-            
-            # Update scan with score and possible glitch
-            final_visual = draw_visuals(img_rgb, pred, sensitivity)
-            if pred > sensitivity:
-                final_visual = apply_glitch(final_visual)
-                
-            scan_placeholder.image(final_visual, use_container_width=True)
-            
-            c1, c2 = st.columns(2)
-            if pred > sensitivity:
-                c1.error("🚨 VERDICT: FAKE DETECTED")
-                c2.metric("FAKE PROBABILITY", f"{conf:.2f}%", delta="CRITICAL")
-            else:
-                c1.success("✅ VERDICT: AUTHENTIC")
-                c2.metric("AUTHENTICITY SCORE", f"{100-conf:.2f}%", delta="SAFE")
+            final_vis = apply_glitch(draw_visuals(img_rgb, pred, sensitivity), pred) if pred > sensitivity else draw_visuals(img_rgb, pred, sensitivity)
+            scan.image(final_vis, use_container_width=True)
+            if pred > sensitivity: st.error(f"🚨 MANIPULATION DETECTED: {pred*100:.2f}%")
+            else: st.success("✅ AUTHENTIC")
