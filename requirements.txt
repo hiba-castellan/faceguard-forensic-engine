@@ -1,8 +1,10 @@
-streamlit
-opencv-python-headless
-numpy
-tensorflow
-mediapipe
-pandas
-plotly
+streamlit==1.32.0
+opencv-python-headless==4.9.0.80
+numpy==1.26.4
+pandas==2.2.2
+plotly==5.19.0
+tensorflow==2.13.0
+keras==2.15.0
+mediapipe==0.10.9
+h5py==3.10.0
 
