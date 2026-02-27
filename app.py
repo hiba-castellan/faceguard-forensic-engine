@@ -1,5 +1,5 @@
 import streamlit as st
-import opencv-python-headless
+import cv2
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -342,4 +342,5 @@ elif mode == "📸 Image Analysis":
             scan.image(final_vis, use_container_width=True)
             if pred > sensitivity: st.error(f"🚨 MANIPULATION DETECTED: {pred*100:.2f}%")
             else: st.success("✅ AUTHENTIC")
+
 
