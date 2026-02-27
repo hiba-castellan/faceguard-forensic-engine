@@ -186,14 +186,22 @@ def simulate_terminal_logging():
     terminal.empty()
 
 # ================= MAIN APP =================
+
+st.write("Current directory files:", os.listdir())
+if os.path.exists("models"):
+    st.write("Files in models folder:", os.listdir("models"))
+else:
+    st.write("Models folder does NOT exist")
+
 @st.cache_resource
 def load_faceguard_model():
     return load_model(MODEL_PATH)
 
 try:
     model = load_faceguard_model()
-except:
+except Exception as e:
     st.error("❌ Model not found!")
+    st.write("Actual error:", e)
     st.stop()
 
 st.sidebar.title("⚙️ CONTROL PANEL")
@@ -342,5 +350,6 @@ elif mode == "📸 Image Analysis":
             scan.image(final_vis, use_container_width=True)
             if pred > sensitivity: st.error(f"🚨 MANIPULATION DETECTED: {pred*100:.2f}%")
             else: st.success("✅ AUTHENTIC")
+
 
 
