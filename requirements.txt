@@ -3,3 +3,5 @@ opencv-python-headless
 numpy
 tensorflow
 mediapipe
+pandas
+plotly
